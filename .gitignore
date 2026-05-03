@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+
+backend/.env
+backend/*.db
+backend/*.log
+
+data/gtfs_static/
+data/*.zip
+
+frontend/node_modules/
+frontend/dist/
+frontend/.env
