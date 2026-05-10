@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Alert, DelaySummary, PredictionRequest, PredictionResult, Route, Stop } from '../types/transit'
+import type { Alert, DataStatus, DelaySummary, PredictionRequest, PredictionResult, Route, Stop } from '../types/transit'
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000',
@@ -16,6 +16,10 @@ export const api = {
   },
   async getDelaySummary(routeId: string, stopId?: string): Promise<DelaySummary> {
     const { data } = await http.get('/delays/summary', { params: { route_id: routeId, stop_id: stopId } })
+    return data
+  },
+  async getDataStatus(): Promise<DataStatus> {
+    const { data } = await http.get('/delays/data-status')
     return data
   },
   async getAlerts(routeId?: string): Promise<Alert[]> {

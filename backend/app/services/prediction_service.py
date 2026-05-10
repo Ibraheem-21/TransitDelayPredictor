@@ -11,6 +11,7 @@ from app.schemas import PredictionRequest, PredictionResponse
 
 CLASSIFIER_PATH = Path("models/delay_classifier.pkl")
 REGRESSOR_PATH = Path("models/delay_regressor.pkl")
+LIVE_SOURCE = "gtfs-realtime"
 
 
 def is_rush_hour(value: datetime) -> bool:
@@ -33,7 +34,7 @@ def _range(expected: float) -> str:
 
 
 def _baseline(db: Session, payload: PredictionRequest) -> tuple[float, float, int]:
-    filters = [RealtimeObservation.route_id == payload.route_id]
+    filters = [RealtimeObservation.route_id == payload.route_id, RealtimeObservation.source == LIVE_SOURCE]
     if payload.stop_id:
         filters.append(RealtimeObservation.stop_id == payload.stop_id)
 
@@ -75,6 +76,7 @@ def _top_factors(db: Session, payload: PredictionRequest) -> list[str]:
     recent_avg = db.scalar(
         select(func.avg(RealtimeObservation.delay_minutes)).where(
             RealtimeObservation.route_id == payload.route_id,
+            RealtimeObservation.source == LIVE_SOURCE,
             RealtimeObservation.observed_time >= recent_since,
         )
     )
@@ -105,17 +107,24 @@ def _top_factors(db: Session, payload: PredictionRequest) -> list[str]:
 def _model_features(db: Session, payload: PredictionRequest) -> pd.DataFrame:
     weather = db.scalar(select(WeatherObservation).order_by(WeatherObservation.observed_time.desc()).limit(1))
     route_avg = db.scalar(
-        select(func.avg(RealtimeObservation.delay_minutes)).where(RealtimeObservation.route_id == payload.route_id)
+        select(func.avg(RealtimeObservation.delay_minutes)).where(
+            RealtimeObservation.route_id == payload.route_id,
+            RealtimeObservation.source == LIVE_SOURCE,
+        )
     ) or 0
     stop_avg = 0
     if payload.stop_id:
         stop_avg = db.scalar(
-            select(func.avg(RealtimeObservation.delay_minutes)).where(RealtimeObservation.stop_id == payload.stop_id)
+            select(func.avg(RealtimeObservation.delay_minutes)).where(
+                RealtimeObservation.stop_id == payload.stop_id,
+                RealtimeObservation.source == LIVE_SOURCE,
+            )
         ) or 0
     recent_since = datetime.utcnow() - timedelta(minutes=30)
     recent_avg = db.scalar(
         select(func.avg(RealtimeObservation.delay_minutes)).where(
             RealtimeObservation.route_id == payload.route_id,
+            RealtimeObservation.source == LIVE_SOURCE,
             RealtimeObservation.observed_time >= recent_since,
         )
     ) or route_avg

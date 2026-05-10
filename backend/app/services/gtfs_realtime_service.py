@@ -3,6 +3,7 @@ import os
 
 import requests
 from google.transit import gtfs_realtime_pb2
+from requests import HTTPError
 from sqlalchemy.orm import Session
 
 from app.models import RealtimeObservation, ServiceAlert
@@ -12,7 +13,10 @@ def fetch_feed(url: str) -> gtfs_realtime_pb2.FeedMessage:
     api_key = os.getenv("OPENMETROLINX_API_KEY")
     params = {"key": api_key} if api_key else None
     response = requests.get(url, params=params, headers={"Accept": "application/x-protobuf"}, timeout=30)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except HTTPError as exc:
+        raise RuntimeError(f"Open Metrolinx request failed with HTTP {response.status_code}") from exc
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(response.content)
     return feed
@@ -58,6 +62,7 @@ def collect_trip_updates(db: Session, url: str) -> int:
 def collect_service_alerts(db: Session, url: str) -> int:
     feed = fetch_feed(url)
     count = 0
+    db.query(ServiceAlert).delete()
     for entity in feed.entity:
         if not entity.HasField("alert"):
             continue

@@ -32,6 +32,8 @@ Open Metrolinx realtime API access is free, but it requires registration for an 
 
 Weather collection prefers `WORLDWEATHERONLINE_API_KEY` when present and falls back to `OPENWEATHER_API_KEY`. The default 10-city hourly collection uses about 240 requests/day.
 
+Do not put real API keys in `backend/.env.example`, frontend files, README files, or committed code. `backend/.env` is ignored by Git and is the only intended local place for secrets.
+
 ## Backend Setup
 
 ```bash
@@ -79,16 +81,7 @@ cd backend
 python -m app.scripts.scheduler
 ```
 
-## Temporary Demo Data
-
-If you are waiting for an Open Metrolinx API key, seed synthetic observations generated from the real imported GTFS schedule:
-
-```bash
-cd backend
-python -m app.scripts.seed_demo_observations
-```
-
-These rows are marked with `source=synthetic`. They are useful for UI development, charts, and baseline predictor testing, but they are not live Metrolinx delay observations.
+Open Metrolinx GTFS Realtime is a live feed, not a historical archive. GOPredict builds historical delay charts by continuously collecting snapshots into the local database over time.
 
 ## Model Explanation
 

@@ -30,6 +30,7 @@ def build_training_dataset() -> pd.DataFrame:
         LIMIT 1
       )
     WHERE ro.delay_minutes IS NOT NULL
+      AND ro.source = 'gtfs-realtime'
     """
     df = pd.read_sql_query(query, engine)
     if df.empty:

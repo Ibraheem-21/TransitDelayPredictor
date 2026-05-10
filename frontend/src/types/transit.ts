@@ -40,6 +40,23 @@ export type DelaySummary = {
   sample_size: number
 }
 
+export type DataSourceRow = {
+  source: string
+  count: number
+  earliest_observed_time?: string | null
+  latest_observed_time?: string | null
+}
+
+export type DataStatus = {
+  live_only: boolean
+  live_source: string
+  sources: DataSourceRow[]
+  live_observation_count: number
+  synthetic_observation_count: number
+  earliest_live_observed_time?: string | null
+  latest_live_observed_time?: string | null
+}
+
 export type Alert = {
   id: number
   route_id?: string | null

@@ -13,13 +13,18 @@ import { StopSelector } from './components/StopSelector'
 import { api } from './api/client'
 import type { Alert, DelaySummary, PredictionResult, Route, Stop } from './types/transit'
 
+function localDateTimeValue() {
+  const now = new Date()
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
 function App() {
   const [routes, setRoutes] = useState<Route[]>([])
   const [stops, setStops] = useState<Stop[]>([])
   const [routeMode, setRouteMode] = useState<RouteMode>('rail')
   const [selectedRoute, setSelectedRoute] = useState('')
   const [selectedStop, setSelectedStop] = useState('')
-  const [dateTime, setDateTime] = useState(() => new Date().toISOString().slice(0, 16))
+  const [dateTime, setDateTime] = useState(localDateTimeValue)
   const [prediction, setPrediction] = useState<PredictionResult | null>(null)
   const [summary, setSummary] = useState<DelaySummary | null>(null)
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -135,10 +140,13 @@ function App() {
 
         {loading && <LoadingSpinner />}
 
-        <section className="grid gap-4 lg:grid-cols-3">
+        <section className="grid gap-4 lg:grid-cols-2">
           <PredictionCard prediction={prediction} riskLabel={riskLabel} />
           <ReliabilityScoreCard summary={summary} />
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
             <div className="mb-3 flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-sky-700" />
               <h2 className="text-base font-semibold">Route Snapshot</h2>
@@ -150,11 +158,12 @@ function App() {
               <Metric label="Worst day" value={summary?.worst_day_of_week ?? 'N/A'} />
             </dl>
           </div>
-        </section>
-
-        <section className="grid gap-4 lg:grid-cols-2">
-          <DelayChart title="Delay by Hour" data={summary?.delay_by_hour ?? []} xKey="hour" />
-          <DelayChart title="Delay by Day" data={summary?.delay_by_day ?? []} xKey="day" />
+          <div className="lg:col-span-2">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <DelayChart title="Delay by Hour" subtitle="Collected live samples by local hour" data={summary?.delay_by_hour ?? []} xKey="hour" />
+              <DelayChart title="Delay by Day" subtitle="Collected live samples by local day" data={summary?.delay_by_day ?? []} xKey="day" />
+            </div>
+          </div>
         </section>
       </main>
     </div>
