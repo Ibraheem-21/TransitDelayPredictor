@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ServiceAlert
 from app.schemas import AlertOut
+from app.services.route_grouping import member_route_ids
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -16,5 +17,7 @@ def list_alerts(route_id: str | None = Query(default=None), db: Session = Depend
     now = datetime.utcnow()
     stmt = select(ServiceAlert).where(or_(ServiceAlert.end_time.is_(None), ServiceAlert.end_time >= now))
     if route_id:
-        stmt = stmt.where(or_(ServiceAlert.route_id == route_id, ServiceAlert.route_id.is_(None)))
+        stmt = stmt.where(
+            or_(ServiceAlert.route_id.in_(member_route_ids(db, route_id)), ServiceAlert.route_id.is_(None))
+        )
     return list(db.scalars(stmt.order_by(ServiceAlert.created_at.desc()).limit(50)).all())

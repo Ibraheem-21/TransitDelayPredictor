@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import alerts, delays, predictions, routes, stops
+from app.api import alerts, delays, predictions, reliability, routes, stops
 from app.database import init_db
 
 app = FastAPI(title="GOPredict", version="0.1.0")
@@ -35,3 +35,4 @@ app.include_router(stops.router)
 app.include_router(delays.router)
 app.include_router(predictions.router)
 app.include_router(alerts.router)
+app.include_router(reliability.router)

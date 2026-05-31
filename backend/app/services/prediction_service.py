@@ -6,17 +6,29 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.constants import DELAY_THRESHOLD_MINUTES, LIVE_SOURCE
 from app.models import PredictionLog, RealtimeObservation, ServiceAlert, WeatherObservation
-from app.schemas import PredictionRequest, PredictionResponse
+from app.schemas import LiveStatus, PredictionRequest, PredictionResponse
+from app.services.route_grouping import member_route_ids
 
 CLASSIFIER_PATH = Path("models/delay_classifier.pkl")
 REGRESSOR_PATH = Path("models/delay_regressor.pkl")
-LIVE_SOURCE = "gtfs-realtime"
+
+# How recent an observation must be to count as the route's "live" status.
+LIVE_WINDOW_MINUTES = 90
 
 
 def is_rush_hour(value: datetime) -> bool:
     minutes = value.hour * 60 + value.minute
     return (6 * 60 + 30 <= minutes <= 9 * 60 + 30) or (15 * 60 + 30 <= minutes <= 18 * 60 + 30)
+
+
+def risk_label(probability: float) -> str:
+    if probability > 0.6:
+        return "High"
+    if probability > 0.3:
+        return "Medium"
+    return "Low"
 
 
 def _confidence(sample_size: int, model_used: bool) -> str:
@@ -33,41 +45,116 @@ def _range(expected: float) -> str:
     return f"{low}-{high} minutes"
 
 
-def _baseline(db: Session, payload: PredictionRequest) -> tuple[float, float, int]:
-    filters = [RealtimeObservation.route_id == payload.route_id, RealtimeObservation.source == LIVE_SOURCE]
-    if payload.stop_id:
-        filters.append(RealtimeObservation.stop_id == payload.stop_id)
+def get_live_status(db: Session, route_id: str, stop_id: str | None = None) -> LiveStatus:
+    """Current, observed delay state for a route (distinct from prediction)."""
+    filters = [
+        RealtimeObservation.route_id.in_(member_route_ids(db, route_id)),
+        RealtimeObservation.source == LIVE_SOURCE,
+    ]
+    if stop_id:
+        filters.append(RealtimeObservation.stop_id == stop_id)
+
+    since = datetime.utcnow() - timedelta(minutes=LIVE_WINDOW_MINUTES)
+    recent_filters = [*filters, RealtimeObservation.observed_time >= since]
+
+    sample = db.scalar(select(func.count()).select_from(RealtimeObservation).where(*recent_filters)) or 0
+    last_observed = db.scalar(
+        select(func.max(RealtimeObservation.observed_time)).where(*filters)
+    )
+
+    if sample == 0:
+        return LiveStatus(
+            status="No live data",
+            average_delay_minutes=0.0,
+            sample_size=0,
+            last_updated=last_observed,
+        )
+
+    avg_delay = float(db.scalar(select(func.avg(RealtimeObservation.delay_minutes)).where(*recent_filters)) or 0)
+    cancelled = db.scalar(
+        select(func.count())
+        .select_from(RealtimeObservation)
+        .where(*recent_filters, RealtimeObservation.status == "CANCELED")
+    ) or 0
+
+    if cancelled > 0:
+        status = "Cancellations reported"
+    elif avg_delay >= 10:
+        status = "Major delays"
+    elif avg_delay >= DELAY_THRESHOLD_MINUTES:
+        status = "Minor delays"
+    else:
+        status = "On time"
+
+    return LiveStatus(
+        status=status,
+        average_delay_minutes=round(avg_delay, 1),
+        sample_size=sample,
+        last_updated=last_observed,
+    )
+
+
+def estimate_baseline(
+    db: Session, route_id: str, when: datetime, stop_id: str | None = None
+) -> tuple[float, float, int, bool]:
+    """Return (probability, expected_minutes, sample_size, is_data_driven).
+
+    When no history exists, a clearly-flagged heuristic default is returned so
+    callers never mistake it for a real, data-backed estimate.
+    """
+    members = member_route_ids(db, route_id)
+    filters = [RealtimeObservation.route_id.in_(members), RealtimeObservation.source == LIVE_SOURCE]
+    if stop_id:
+        filters.append(RealtimeObservation.stop_id == stop_id)
 
     total = db.scalar(select(func.count()).select_from(RealtimeObservation).where(*filters)) or 0
     if total == 0:
-        base_probability = 0.35 if is_rush_hour(payload.datetime) else 0.18
-        base_minutes = 6.0 if is_rush_hour(payload.datetime) else 3.0
-        return base_probability, base_minutes, 0
+        base_probability = 0.35 if is_rush_hour(when) else 0.18
+        base_minutes = 6.0 if is_rush_hour(when) else 3.0
+        return base_probability, base_minutes, 0, False
 
-    delayed = db.scalar(select(func.count()).select_from(RealtimeObservation).where(*filters, RealtimeObservation.delay_minutes >= 5)) or 0
-    avg_delay = db.scalar(select(func.avg(RealtimeObservation.delay_minutes)).where(*filters)) or 0
+    delayed = db.scalar(
+        select(func.count())
+        .select_from(RealtimeObservation)
+        .where(*filters, RealtimeObservation.delay_minutes >= DELAY_THRESHOLD_MINUTES)
+    ) or 0
+    avg_delay = float(db.scalar(select(func.avg(RealtimeObservation.delay_minutes)).where(*filters)) or 0)
     probability = delayed / total
 
-    if is_rush_hour(payload.datetime):
+    if is_rush_hour(when):
         probability = min(1, probability + 0.12)
-        avg_delay = float(avg_delay) + 2
+        avg_delay += 2
 
     weather = db.scalar(select(WeatherObservation).order_by(WeatherObservation.observed_time.desc()).limit(1))
     if weather:
         if (weather.rain or 0) > 0 or (weather.precipitation or 0) >= 1:
             probability = min(1, probability + 0.07)
-            avg_delay = float(avg_delay) + 1
+            avg_delay += 1
         if (weather.snow or 0) > 0:
             probability = min(1, probability + 0.12)
-            avg_delay = float(avg_delay) + 2
+            avg_delay += 2
         if (weather.wind_speed or 0) >= 35:
             probability = min(1, probability + 0.05)
-            avg_delay = float(avg_delay) + 1
+            avg_delay += 1
 
-    return round(probability, 2), round(float(avg_delay), 1), total
+    # An active alert raises predicted risk even if averages look calm.
+    active_alert = db.scalar(
+        select(func.count())
+        .select_from(ServiceAlert)
+        .where(
+            ServiceAlert.route_id.in_(members),
+            (ServiceAlert.end_time.is_(None)) | (ServiceAlert.end_time >= datetime.utcnow()),
+        )
+    ) or 0
+    if active_alert:
+        probability = min(1, probability + 0.1)
+        avg_delay += 1
+
+    return round(probability, 2), round(avg_delay, 1), total, True
 
 
 def _top_factors(db: Session, payload: PredictionRequest) -> list[str]:
+    members = member_route_ids(db, payload.route_id)
     factors: list[str] = []
     if is_rush_hour(payload.datetime):
         factors.append("rush hour")
@@ -75,7 +162,7 @@ def _top_factors(db: Session, payload: PredictionRequest) -> list[str]:
     recent_since = datetime.utcnow() - timedelta(minutes=30)
     recent_avg = db.scalar(
         select(func.avg(RealtimeObservation.delay_minutes)).where(
-            RealtimeObservation.route_id == payload.route_id,
+            RealtimeObservation.route_id.in_(members),
             RealtimeObservation.source == LIVE_SOURCE,
             RealtimeObservation.observed_time >= recent_since,
         )
@@ -85,7 +172,7 @@ def _top_factors(db: Session, payload: PredictionRequest) -> list[str]:
 
     active_alert = db.scalar(
         select(func.count()).select_from(ServiceAlert).where(
-            ServiceAlert.route_id == payload.route_id,
+            ServiceAlert.route_id.in_(members),
             (ServiceAlert.end_time.is_(None)) | (ServiceAlert.end_time >= datetime.utcnow()),
         )
     )
@@ -105,10 +192,11 @@ def _top_factors(db: Session, payload: PredictionRequest) -> list[str]:
 
 
 def _model_features(db: Session, payload: PredictionRequest) -> pd.DataFrame:
+    members = member_route_ids(db, payload.route_id)
     weather = db.scalar(select(WeatherObservation).order_by(WeatherObservation.observed_time.desc()).limit(1))
     route_avg = db.scalar(
         select(func.avg(RealtimeObservation.delay_minutes)).where(
-            RealtimeObservation.route_id == payload.route_id,
+            RealtimeObservation.route_id.in_(members),
             RealtimeObservation.source == LIVE_SOURCE,
         )
     ) or 0
@@ -123,7 +211,7 @@ def _model_features(db: Session, payload: PredictionRequest) -> pd.DataFrame:
     recent_since = datetime.utcnow() - timedelta(minutes=30)
     recent_avg = db.scalar(
         select(func.avg(RealtimeObservation.delay_minutes)).where(
-            RealtimeObservation.route_id == payload.route_id,
+            RealtimeObservation.route_id.in_(members),
             RealtimeObservation.source == LIVE_SOURCE,
             RealtimeObservation.observed_time >= recent_since,
         )
@@ -153,8 +241,11 @@ def _model_features(db: Session, payload: PredictionRequest) -> pd.DataFrame:
 
 
 def predict_delay(db: Session, payload: PredictionRequest) -> PredictionResponse:
-    probability, expected_minutes, sample_size = _baseline(db, payload)
+    probability, expected_minutes, sample_size, is_data_driven = estimate_baseline(
+        db, payload.route_id, payload.datetime, payload.stop_id
+    )
     model_used = False
+    basis = "historical-baseline" if is_data_driven else "heuristic-default"
 
     # The trained model path is reserved for Phase 5. Baseline stays active until
     # enough observations exist and feature parity is available.
@@ -166,6 +257,7 @@ def predict_delay(db: Session, payload: PredictionRequest) -> PredictionResponse
             probability = round(float(classifier.predict_proba(features)[0][1]), 2)
             expected_minutes = round(float(regressor.predict(features)[0]), 1)
             model_used = True
+            basis = "ml-model"
         except Exception:
             model_used = False
 
@@ -185,6 +277,11 @@ def predict_delay(db: Session, payload: PredictionRequest) -> PredictionResponse
         delay_probability=probability,
         expected_delay_minutes=expected_minutes,
         delay_range=_range(expected_minutes),
+        risk_label=risk_label(probability),
         confidence=_confidence(sample_size, model_used),
+        basis=basis,
+        is_data_driven=is_data_driven,
+        sample_size=sample_size,
         top_factors=_top_factors(db, payload),
+        live_status=get_live_status(db, payload.route_id, payload.stop_id),
     )

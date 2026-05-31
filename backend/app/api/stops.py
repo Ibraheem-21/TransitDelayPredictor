@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import ScheduledStopTime, Stop, Trip
 from app.schemas import StopOut
+from app.services.route_grouping import member_route_ids
 
 router = APIRouter(prefix="/stops", tags=["stops"])
 
@@ -17,7 +18,7 @@ def list_stops(route_id: str | None = Query(default=None), db: Session = Depends
     stop_ids = (
         select(ScheduledStopTime.stop_id)
         .join(Trip, ScheduledStopTime.trip_id == Trip.trip_id)
-        .where(Trip.route_id == route_id)
+        .where(Trip.route_id.in_(member_route_ids(db, route_id)))
         .distinct()
     )
     return list(db.scalars(select(Stop).where(Stop.stop_id.in_(stop_ids)).order_by(Stop.stop_name)).all())

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, BarChart3, Clock, RefreshCw, Search } from 'lucide-react'
 import { AlertsPanel } from './components/AlertsPanel'
 import { DateTimePicker } from './components/DateTimePicker'
@@ -8,10 +8,10 @@ import { LoadingSpinner } from './components/LoadingSpinner'
 import { Navbar } from './components/Navbar'
 import { PredictionCard } from './components/PredictionCard'
 import { ReliabilityScoreCard } from './components/ReliabilityScoreCard'
-import { RouteSelector, type RouteMode } from './components/RouteSelector'
+import { RouteSelector } from './components/RouteSelector'
 import { StopSelector } from './components/StopSelector'
 import { api } from './api/client'
-import type { Alert, DelaySummary, PredictionResult, Route, Stop } from './types/transit'
+import type { Alert, DelaySummary, PredictionResult, Reliability, Route, Stop } from './types/transit'
 
 function localDateTimeValue() {
   const now = new Date()
@@ -21,58 +21,51 @@ function localDateTimeValue() {
 function App() {
   const [routes, setRoutes] = useState<Route[]>([])
   const [stops, setStops] = useState<Stop[]>([])
-  const [routeMode, setRouteMode] = useState<RouteMode>('rail')
   const [selectedRoute, setSelectedRoute] = useState('')
   const [selectedStop, setSelectedStop] = useState('')
   const [dateTime, setDateTime] = useState(localDateTimeValue)
   const [prediction, setPrediction] = useState<PredictionResult | null>(null)
   const [summary, setSummary] = useState<DelaySummary | null>(null)
+  const [reliability, setReliability] = useState<Reliability | null>(null)
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.getRoutes().then(setRoutes).catch(() => setError('Backend is not reachable or no routes are loaded yet.'))
+    api.getRoutes().then(setRoutes).catch(() => setError('Backend is not reachable or no rail routes are loaded yet.'))
   }, [])
 
-  const changeRouteMode = (nextMode: RouteMode) => {
-    setRouteMode(nextMode)
-    setSelectedRoute('')
-  }
-
-  useEffect(() => {
+  const selectRoute = (routeId: string) => {
+    setSelectedRoute(routeId)
     setStops([])
     setSelectedStop('')
     setPrediction(null)
     setSummary(null)
+    setReliability(null)
     setAlerts([])
-    if (!selectedRoute) return
+    setError('')
+    if (!routeId) return
 
     setLoading(true)
     Promise.all([
-      api.getStops(selectedRoute),
-      api.getDelaySummary(selectedRoute),
-      api.getAlerts(selectedRoute),
+      api.getStops(routeId),
+      api.getDelaySummary(routeId),
+      api.getAlerts(routeId),
+      api.getReliability(routeId),
     ])
-      .then(([nextStops, nextSummary, nextAlerts]) => {
+      .then(([nextStops, nextSummary, nextAlerts, nextReliability]) => {
         setStops(nextStops)
         setSummary(nextSummary)
         setAlerts(nextAlerts)
+        setReliability(nextReliability)
       })
       .catch(() => setError('Could not load route details. Check the backend logs.'))
       .finally(() => setLoading(false))
-  }, [selectedRoute])
-
-  const riskLabel = useMemo(() => {
-    const probability = prediction?.delay_probability ?? 0
-    if (probability > 0.6) return 'High'
-    if (probability > 0.3) return 'Medium'
-    return 'Low'
-  }, [prediction])
+  }
 
   const runPrediction = async () => {
     if (!selectedRoute) {
-      setError('Choose a route first.')
+      setError('Choose a rail line first.')
       return
     }
     setError('')
@@ -84,7 +77,12 @@ function App() {
         datetime: new Date(dateTime).toISOString(),
       })
       setPrediction(result)
-      setSummary(await api.getDelaySummary(selectedRoute, selectedStop || undefined))
+      const [nextSummary, nextReliability] = await Promise.all([
+        api.getDelaySummary(selectedRoute, selectedStop || undefined),
+        api.getReliability(selectedRoute, selectedStop || undefined),
+      ])
+      setSummary(nextSummary)
+      setReliability(nextReliability)
     } catch {
       setError('Prediction failed. Check that the backend is running.')
     } finally {
@@ -98,17 +96,15 @@ function App() {
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <section className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
           <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-5 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
-                  <Search className="h-5 w-5" />
-                </div>
-                <h1 className="text-xl font-semibold tracking-normal">GOPredict</h1>
+            <div className="mb-5 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+                <Search className="h-5 w-5" />
               </div>
+              <h1 className="text-xl font-semibold tracking-normal">GO Rail Delay Predictor</h1>
             </div>
             <div className="grid max-w-4xl gap-4 lg:grid-cols-2">
               <div className="rounded-md border border-slate-200 bg-slate-50/70 p-3">
-                <RouteSelector routes={routes} mode={routeMode} onModeChange={changeRouteMode} value={selectedRoute} onChange={setSelectedRoute} />
+                <RouteSelector routes={routes} value={selectedRoute} onChange={selectRoute} />
               </div>
               <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50/70 p-3">
                 <StopSelector stops={stops} value={selectedStop} onChange={setSelectedStop} disabled={!selectedRoute} />
@@ -141,15 +137,15 @@ function App() {
         {loading && <LoadingSpinner />}
 
         <section className="grid gap-4 lg:grid-cols-2">
-          <PredictionCard prediction={prediction} riskLabel={riskLabel} />
-          <ReliabilityScoreCard summary={summary} />
+          <PredictionCard prediction={prediction} />
+          <ReliabilityScoreCard reliability={reliability} />
         </section>
 
         <section className="grid gap-4 lg:grid-cols-3">
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
             <div className="mb-3 flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-sky-700" />
-              <h2 className="text-base font-semibold">Route Snapshot</h2>
+              <h2 className="text-base font-semibold">Selected route stats</h2>
             </div>
             <dl className="grid grid-cols-2 gap-3 text-sm">
               <Metric label="Average delay" value={`${summary?.average_delay ?? 0} min`} />
@@ -160,8 +156,8 @@ function App() {
           </div>
           <div className="lg:col-span-2">
             <div className="grid gap-4 lg:grid-cols-2">
-              <DelayChart title="Delay by Hour" subtitle="Collected live samples by local hour" data={summary?.delay_by_hour ?? []} xKey="hour" />
-              <DelayChart title="Delay by Day" subtitle="Collected live samples by local day" data={summary?.delay_by_day ?? []} xKey="day" />
+              <DelayChart title="Delays by Hour of Day" subtitle="Collected live samples by local hour" data={summary?.delay_by_hour ?? []} xKey="hour" />
+              <DelayChart title="Delays by Day of Week" subtitle="Collected live samples by local day" data={summary?.delay_by_day ?? []} xKey="day" />
             </div>
           </div>
         </section>
