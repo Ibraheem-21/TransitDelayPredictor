@@ -1,10 +1,18 @@
 # GOPredict
 
-A web app for collecting GO Transit GTFS schedule and realtime data, storing historical delay observations, and predicting delay risk by route, stop, and travel time.
+A web app focused exclusively on **GO Transit rail (train) delay prediction**. It collects GO Transit / Metrolinx GTFS schedule and realtime data, stores historical delay observations, and predicts delay risk by rail line, stop, and travel time. Bus service is intentionally out of scope (only GTFS `route_type == 2` rail lines are imported and served).
 
 ## Problem
 
-GO Transit commuters need a practical signal before leaving: delay probability, expected delay range, route reliability, active alerts, and historical delay trends. This MVP uses GTFS static data, GTFS Realtime feeds, OpenWeather observations, and a baseline predictor that can be replaced by trained scikit-learn models once enough history is collected.
+GO Transit rail commuters need a practical signal before leaving: live delay status, predicted delay risk, route reliability, active alerts, and historical delay trends. This app uses GTFS static data, GTFS Realtime feeds, weather observations, and a baseline predictor that can be replaced by trained scikit-learn models once enough history is collected.
+
+## Features
+
+- **Live status vs predicted risk** — the prediction clearly separates the currently observed delay state (`live_status`) from the forecast delay risk, and flags heuristic estimates (`is_data_driven: false`) when there is not enough history.
+- **Route reliability** — each rail line gets a 0-100 score plus a High/Medium/Low grade and plain-language reasons, derived from delay frequency, average delay length, cancellation rate, active alerts, and recent disruptions (`GET /reliability`).
+- **Analytics** — delays by hour of day, delays by day of week, per-route snapshots, and a route-level reliability comparison.
+- **Route snapshots** — current status, predicted risk, average recent delay, reliability score, recent alerts, and last-updated time per line (`GET /routes/snapshots`).
+- **Resilient collection** — GTFS Realtime fetches use a short-lived cache, retry with backoff on rate limiting (HTTP 429) and upstream errors, and validate/clamp implausible delay values.
 
 ## Data Sources
 
@@ -33,6 +41,16 @@ Open Metrolinx realtime API access is free, but it requires registration for an 
 Weather collection prefers `WORLDWEATHERONLINE_API_KEY` when present and falls back to `OPENWEATHER_API_KEY`. The default 10-city hourly collection uses about 240 requests/day.
 
 Do not put real API keys in `backend/.env.example`, frontend files, README files, or committed code. `backend/.env` is ignored by Git and is the only intended local place for secrets.
+
+## Quick Start (one command)
+
+On Windows, from the project root:
+
+```powershell
+.\run.ps1
+```
+
+This auto-creates the Python virtual environment, installs backend and frontend dependencies, creates `backend/.env` from the example, and launches both the API (`http://localhost:8000`) and the React app (`http://localhost:5173`) in separate windows. Re-running it skips setup steps that are already done. Add your API keys to `backend/.env` to enable realtime and weather collection.
 
 ## Backend Setup
 

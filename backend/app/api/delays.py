@@ -6,8 +6,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.constants import LIVE_SOURCE
 from app.database import get_db
 from app.models import RealtimeObservation
+from app.services.route_grouping import member_route_ids
 
 router = APIRouter(prefix="/delays", tags=["delays"])
 UTC = ZoneInfo("UTC")
@@ -71,8 +73,8 @@ def delay_history(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     stmt = select(RealtimeObservation).where(
-        RealtimeObservation.route_id == route_id,
-        RealtimeObservation.source == "gtfs-realtime",
+        RealtimeObservation.route_id.in_(member_route_ids(db, route_id)),
+        RealtimeObservation.source == LIVE_SOURCE,
     )
     if stop_id:
         stmt = stmt.where(RealtimeObservation.stop_id == stop_id)
@@ -105,7 +107,10 @@ def delay_summary(
     stop_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
-    filters = [RealtimeObservation.route_id == route_id, RealtimeObservation.source == "gtfs-realtime"]
+    filters = [
+        RealtimeObservation.route_id.in_(member_route_ids(db, route_id)),
+        RealtimeObservation.source == LIVE_SOURCE,
+    ]
     if stop_id:
         filters.append(RealtimeObservation.stop_id == stop_id)
 

@@ -43,9 +43,25 @@ class PredictionRequest(BaseModel):
     datetime: datetime
 
 
+class LiveStatus(BaseModel):
+    """Currently observed delay state, kept separate from predicted risk."""
+
+    status: str
+    average_delay_minutes: float
+    sample_size: int
+    last_updated: datetime | None = None
+
+
 class PredictionResponse(BaseModel):
     delay_probability: float
     expected_delay_minutes: float
     delay_range: str
+    risk_label: str
     confidence: str
+    # How the prediction was produced: "ml-model", "historical-baseline", or
+    # "heuristic-default" (no history yet, not data-backed).
+    basis: str
+    is_data_driven: bool
+    sample_size: int
     top_factors: list[str]
+    live_status: LiveStatus

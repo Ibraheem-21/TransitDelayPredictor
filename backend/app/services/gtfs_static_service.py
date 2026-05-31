@@ -5,6 +5,7 @@ import pandas as pd
 import requests
 from sqlalchemy.orm import Session
 
+from app.constants import RAIL_ROUTE_TYPE
 from app.models import Route, ScheduledStopTime, Stop, Trip
 
 
@@ -26,6 +27,16 @@ def import_gtfs_static(db: Session, gtfs_dir: Path) -> dict[str, int]:
     stops = pd.read_csv(gtfs_dir / "stops.txt")
     trips = pd.read_csv(gtfs_dir / "trips.txt")
     stop_times = pd.read_csv(gtfs_dir / "stop_times.txt", usecols=["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"])
+
+    # Rail-only app: keep GTFS route_type 2 and drop every bus route plus the
+    # trips, stop_times, and stops that only belong to bus service.
+    routes = routes[routes["route_type"].astype(str) == RAIL_ROUTE_TYPE]
+    rail_route_ids = set(routes["route_id"].astype(str))
+    trips = trips[trips["route_id"].astype(str).isin(rail_route_ids)]
+    rail_trip_ids = set(trips["trip_id"].astype(str))
+    stop_times = stop_times[stop_times["trip_id"].astype(str).isin(rail_trip_ids)]
+    rail_stop_ids = set(stop_times["stop_id"].astype(str))
+    stops = stops[stops["stop_id"].astype(str).isin(rail_stop_ids)]
 
     db.query(ScheduledStopTime).delete()
     db.query(Trip).delete()

@@ -14,13 +14,45 @@ export type Stop = {
   longitude?: number | null
 }
 
+export type LiveStatus = {
+  status: string
+  average_delay_minutes: number
+  sample_size: number
+  last_updated?: string | null
+}
+
 export type PredictionResult = {
   delay_probability: number
   expected_delay_minutes: number
   delay_range: string
+  risk_label: string
   confidence: string
+  basis: string
+  is_data_driven: boolean
+  sample_size: number
   top_factors: string[]
+  live_status: LiveStatus
 }
+
+export type ReliabilityComponents = {
+  delay_frequency_pct: number
+  avg_delay_minutes: number
+  cancellation_pct: number
+  active_alert_count: number
+  recent_avg_delay_minutes: number
+  sample_size: number
+}
+
+export type Reliability = {
+  route_id: string
+  route_name?: string
+  score: number | null
+  grade: string
+  confidence: string
+  reasons: string[]
+  components: ReliabilityComponents
+}
+
 
 export type DelayBucket = {
   hour?: number
